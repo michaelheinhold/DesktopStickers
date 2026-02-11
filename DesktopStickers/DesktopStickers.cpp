@@ -17,6 +17,13 @@ HINSTANCE hInst;
 ULONG_PTR gdiplusToken;
 Image* pImage = NULL;
 
+// window dragging state
+BOOL isDragging = FALSE;
+POINT dragOffset;
+
+// click through gloabal var
+BOOL isClickThrough = FALSE;
+
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 
 int WINAPI WinMain(
@@ -116,6 +123,62 @@ LRESULT CALLBACK WndProc(
 		}
 
 		EndPaint(hWnd, &ps);
+		break;
+	case WM_LBUTTONDOWN: // dragging window
+		isDragging = TRUE;
+
+		RECT rect;
+		GetWindowRect(hWnd, &rect); // get window current pos (x,y)
+
+		POINT cursorPos;
+		GetCursorPos(&cursorPos); // get cursor pos (x,y)
+
+		// calc offset
+		dragOffset.x = cursorPos.x - rect.left;
+		dragOffset.y = cursorPos.y - rect.top;
+
+		SetCapture(hWnd);
+		break;
+	case WM_MOUSEMOVE:
+		if (isDragging)
+		{
+			POINT cursorPos;
+			GetCursorPos(&cursorPos);
+
+			// new window pos = curr mouse pos - offset
+			SetWindowPos(hWnd, NULL,
+				cursorPos.x - dragOffset.x,
+				cursorPos.y - dragOffset.y,
+				0, 0,
+				SWP_NOSIZE | SWP_NOZORDER);
+		}
+		break;
+	case WM_LBUTTONUP:
+		if (isDragging)
+		{
+			isDragging = FALSE;
+			ReleaseCapture(); // releases mouse capture
+		}
+		break;
+	case WM_KEYDOWN:
+		// Check if Ctrl+Shift+T is pressed (click through command)
+		if (wParam == 'T' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000))
+		{
+			isClickThrough = !isClickThrough;
+
+			if (isClickThrough)
+			{
+				// enable click-through
+				SetWindowLong(hWnd, GWL_EXSTYLE,
+					GetWindowLong(hWnd, GWL_EXSTYLE) | WS_EX_TRANSPARENT);
+			}
+			else
+			{
+				// disable click-through
+				SetWindowLong(hWnd, GWL_EXSTYLE,
+					GetWindowLong(hWnd, GWL_EXSTYLE) & ~WS_EX_TRANSPARENT);
+			}
+		}
 		break;
 	case WM_DESTROY:
 		PostQuitMessage(0);

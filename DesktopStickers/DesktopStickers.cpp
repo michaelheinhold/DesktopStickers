@@ -34,6 +34,55 @@ StickerData* GetStickerData(HWND hWnd) { return (StickerData*)GetWindowLongPtr(h
 // helper to set sticker data for a window
 void SetStickerData(HWND hWnd, StickerData* pData) { SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)pData); }
 
+HWND CreateStickerWindow(HINSTANCE hInstance, const wchar_t* imagePath, int x, int y)
+{
+	// create sticker data
+	StickerData* pSticker = new StickerData();
+	pSticker->pImage = new Image(imagePath);
+	pSticker->currentFrame = 0;
+	pSticker->isDragging = FALSE;
+	pSticker->isClickThrough = FALSE;
+
+	// get frame # in gif
+	UINT dimensionCount = pSticker->pImage->GetFrameDimensionsCount();
+	GUID* pDimensionIDs = new GUID[dimensionCount];
+	pSticker->pImage->GetFrameDimensionsList(pDimensionIDs, dimensionCount);
+	pSticker->frameCount = pSticker->pImage->GetFrameCount(&pDimensionIDs[0]);
+	delete[] pDimensionIDs;
+
+	// create window
+	HWND hWnd = CreateWindowEx(
+		WS_EX_TOPMOST | WS_EX_LAYERED,
+		szWindowClass,
+		szTitle,
+		WS_POPUP,
+		100, 100,
+		500, 300,
+		NULL,
+		NULL,
+		hInstance,
+		NULL
+	);
+
+	if (!hWnd) return NULL;
+
+	// attach sticker data to window
+	SetStickerData(hWnd, pSticker);
+
+	// make ws_ex_layered opaque 255 = 100%
+	SetLayeredWindowAttributes(hWnd, RGB(255, 0, 255), 255, LWA_COLORKEY | LWA_ALPHA);
+
+	// start gif if file more than 1 frame
+	if (pSticker->frameCount > 1) {
+		SetTimer(hWnd, 1, pSticker->frameDelay, NULL);
+	}
+
+	ShowWindow(hWnd, SW_SHOW);
+	UpdateWindow(hWnd);
+
+	return hWnd;
+}
+
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 
 int WINAPI WinMain(
@@ -69,55 +118,10 @@ int WINAPI WinMain(
 		return 1;
 	}
 
-	// create sticker data
-	StickerData* pSticker = new StickerData();
-	pSticker->pImage = new Image(L"C:\\Users\\micha\\Pictures\\stickers\\miku.gif");
-	pSticker->currentFrame = 0;
-	pSticker->isDragging = FALSE;
-	pSticker->isClickThrough = FALSE;
+	CreateStickerWindow(hInstance, L"C:\\Users\\micha\\Pictures\\stickers\\miku.gif", 100, 100);
 
-	// get frame # in gif
-	UINT dimensionCount = pSticker->pImage->GetFrameDimensionsCount();
-	GUID* pDimensionIDs = new GUID[dimensionCount];
-	pSticker->pImage->GetFrameDimensionsList(pDimensionIDs, dimensionCount);
-	pSticker->frameCount = pSticker->pImage->GetFrameCount(&pDimensionIDs[0]);
-	delete[] pDimensionIDs;
+	CreateStickerWindow(hInstance, L"C:\\Users\\micha\\Pictures\\stickers\\darling.gif", 300, 200);
 
-	HWND hWnd = CreateWindowEx(
-		WS_EX_TOPMOST | WS_EX_LAYERED,
-		szWindowClass,
-		szTitle,
-		WS_POPUP,
-		100, 100,
-		500, 300,
-		NULL,
-		NULL,
-		hInstance,
-		NULL
-	);
-	if (!hWnd)
-	{
-		MessageBox(NULL,
-			_T("Call to CreateWindowEx failed!"),
-			_T("Windows Desktop Guided Tour"),
-			NULL);
-
-		return 1;
-	}
-
-	// attach sticker data to window
-	SetStickerData(hWnd, pSticker);
-
-	// make ws_ex_layered opaque 255 = 100%
-	SetLayeredWindowAttributes(hWnd, 0, 255, LWA_ALPHA);
-
-	// start gif if file more than 1 frame
-	if (pSticker->frameCount > 1) {
-		SetTimer(hWnd, 1, pSticker->frameDelay, NULL);
-	}
-
-	ShowWindow(hWnd, nCmdShow);
-	UpdateWindow(hWnd);
 
 	MSG msg;
 	while (GetMessage(&msg, NULL, 0, 0))
@@ -161,7 +165,7 @@ LRESULT CALLBACK WndProc(
 
 			// draw to buffer
 			Graphics graphics(memDC);
-			graphics.Clear(Color(0, 0, 0, 0));
+			graphics.Clear(Color(255, 0, 255));
 			graphics.DrawImage(pSticker->pImage, 0, 0);
 
 			// copy buffer to screen

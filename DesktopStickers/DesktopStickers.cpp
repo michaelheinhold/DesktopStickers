@@ -8,6 +8,18 @@ using namespace Gdiplus;
 
 #pragma comment(lib, "gdiplus.lib")
 
+// Sticker struct
+struct StickerData
+{
+	Image* pImage;
+	UINT frameCount;
+	UINT currentFrame;
+	BOOL isDragging;
+	POINT dragOffset;
+	BOOL isClickThrough;
+	UINT frameDelay{ 30 };
+};
+
 static TCHAR szWindowClass[] = _T("DesktopStickers");
 static TCHAR szTitle[] = _T("Windows Desktop Sticker Application");
 
@@ -15,19 +27,12 @@ HINSTANCE hInst;
 
 // GDI+ (image loader) globals
 ULONG_PTR gdiplusToken;
-Image* pImage = NULL;
 
-// window dragging state
-BOOL isDragging = FALSE;
-POINT dragOffset;
+// helper to get sticker data from a window
+StickerData* GetStickerData(HWND hWnd) { return (StickerData*)GetWindowLongPtr(hWnd, GWLP_USERDATA); }
 
-// click through gloabal var
-BOOL isClickThrough = FALSE;
-
-// animation globals
-UINT frameCount = 0;
-UINT currentFrame = 0;
-UINT frameDelay = 30;
+// helper to set sticker data for a window
+void SetStickerData(HWND hWnd, StickerData* pData) { SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)pData); }
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 
@@ -41,18 +46,7 @@ int WINAPI WinMain(
 	GdiplusStartupInput gdiplusStartupInput;
 	GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
 
-	// load the image
-	pImage = new Image(L"C:\\Users\\micha\\Pictures\\stickers\\miku.gif");
-
-	// Get the number of frames in the GIF
-	UINT dimensionCount = pImage->GetFrameDimensionsCount();
-	GUID* pDimensionIDs = new GUID[dimensionCount];
-	pImage->GetFrameDimensionsList(pDimensionIDs, dimensionCount);
-	frameCount = pImage->GetFrameCount(&pDimensionIDs[0]);
-	delete[] pDimensionIDs;
-
 	WNDCLASSEX wcex;
-
 	wcex.cbSize = sizeof(WNDCLASSEX);
 	wcex.style			= CS_HREDRAW | CS_VREDRAW;
 	wcex.lpfnWndProc	= WndProc;
@@ -74,6 +68,20 @@ int WINAPI WinMain(
 			NULL);
 		return 1;
 	}
+
+	// create sticker data
+	StickerData* pSticker = new StickerData();
+	pSticker->pImage = new Image(L"C:\\Users\\micha\\Pictures\\stickers\\miku.gif");
+	pSticker->currentFrame = 0;
+	pSticker->isDragging = FALSE;
+	pSticker->isClickThrough = FALSE;
+
+	// get frame # in gif
+	UINT dimensionCount = pSticker->pImage->GetFrameDimensionsCount();
+	GUID* pDimensionIDs = new GUID[dimensionCount];
+	pSticker->pImage->GetFrameDimensionsList(pDimensionIDs, dimensionCount);
+	pSticker->frameCount = pSticker->pImage->GetFrameCount(&pDimensionIDs[0]);
+	delete[] pDimensionIDs;
 
 	HWND hWnd = CreateWindowEx(
 		WS_EX_TOPMOST | WS_EX_LAYERED,
@@ -97,12 +105,15 @@ int WINAPI WinMain(
 		return 1;
 	}
 
+	// attach sticker data to window
+	SetStickerData(hWnd, pSticker);
+
 	// make ws_ex_layered opaque 255 = 100%
 	SetLayeredWindowAttributes(hWnd, 0, 255, LWA_ALPHA);
 
 	// start gif if file more than 1 frame
-	if (frameCount > 1) {
-		SetTimer(hWnd, 1, frameDelay, NULL);
+	if (pSticker->frameCount > 1) {
+		SetTimer(hWnd, 1, pSticker->frameDelay, NULL);
 	}
 
 	ShowWindow(hWnd, nCmdShow);
@@ -126,14 +137,16 @@ LRESULT CALLBACK WndProc(
 {
 	PAINTSTRUCT ps;
 	HDC hdc;
-	TCHAR greeting[] = _T("Hello, Windows desktop!");
+	
+	// get this windows sticker data
+	StickerData* pSticker = GetStickerData(hWnd);
 
 	switch (message)
 	{
 	case WM_PAINT:
 		hdc = BeginPaint(hWnd, &ps);
 
-		if (pImage)
+		if (pSticker && pSticker->pImage)
 		{
 			// get window size
 			RECT rect;
@@ -149,7 +162,7 @@ LRESULT CALLBACK WndProc(
 			// draw to buffer
 			Graphics graphics(memDC);
 			graphics.Clear(Color(0, 0, 0, 0));
-			graphics.DrawImage(pImage, 0, 0);
+			graphics.DrawImage(pSticker->pImage, 0, 0);
 
 			// copy buffer to screen
 			BitBlt(hdc, 0, 0, width, height, memDC, 0, 0, SRCCOPY);
@@ -163,48 +176,51 @@ LRESULT CALLBACK WndProc(
 		EndPaint(hWnd, &ps);
 		break;
 	case WM_LBUTTONDOWN: // dragging window
-		isDragging = TRUE;
+		if (pSticker)
+		{
+			pSticker->isDragging = TRUE;
 
-		RECT rect;
-		GetWindowRect(hWnd, &rect); // get window current pos (x,y)
+			RECT rect;
+			GetWindowRect(hWnd, &rect); // get window current pos (x,y)
 
-		POINT cursorPos;
-		GetCursorPos(&cursorPos); // get cursor pos (x,y)
+			POINT cursorPos;
+			GetCursorPos(&cursorPos); // get cursor pos (x,y)
 
-		// calc offset
-		dragOffset.x = cursorPos.x - rect.left;
-		dragOffset.y = cursorPos.y - rect.top;
+			// calc offset
+			pSticker->dragOffset.x = cursorPos.x - rect.left;
+			pSticker->dragOffset.y = cursorPos.y - rect.top;
 
-		SetCapture(hWnd);
+			SetCapture(hWnd);
+		}
 		break;
 	case WM_MOUSEMOVE:
-		if (isDragging)
+		if (pSticker && pSticker->isDragging)
 		{
 			POINT cursorPos;
 			GetCursorPos(&cursorPos);
 
 			// new window pos = curr mouse pos - offset
 			SetWindowPos(hWnd, NULL,
-				cursorPos.x - dragOffset.x,
-				cursorPos.y - dragOffset.y,
+				cursorPos.x - pSticker->dragOffset.x,
+				cursorPos.y - pSticker->dragOffset.y,
 				0, 0,
 				SWP_NOSIZE | SWP_NOZORDER);
 		}
 		break;
 	case WM_LBUTTONUP:
-		if (isDragging)
+		if (pSticker && pSticker->isDragging)
 		{
-			isDragging = FALSE;
+			pSticker->isDragging = FALSE;
 			ReleaseCapture(); // releases mouse capture
 		}
 		break;
 	case WM_KEYDOWN:
 		// Check if Ctrl+Shift+T is pressed (click through command)
-		if (wParam == 'T' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000))
+		if (pSticker && wParam == 'T' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000))
 		{
-			isClickThrough = !isClickThrough;
+			pSticker->isClickThrough = !pSticker->isClickThrough;
 
-			if (isClickThrough)
+			if (pSticker->isClickThrough)
 			{
 				// enable click-through
 				SetWindowLong(hWnd, GWL_EXSTYLE,
@@ -219,14 +235,14 @@ LRESULT CALLBACK WndProc(
 		}
 		break;
 	case WM_TIMER:
-		if (pImage && frameCount > 1)
+		if (pSticker && pSticker->pImage && pSticker->frameCount > 1)
 		{
 			// move to next frame
-			currentFrame = (currentFrame + 1) % frameCount;
+			pSticker->currentFrame = (pSticker->currentFrame + 1) % pSticker->frameCount;
 
 			// select the frame
 			GUID dimensionID = FrameDimensionTime;
-			pImage->SelectActiveFrame(&dimensionID, currentFrame);
+			pSticker->pImage->SelectActiveFrame(&dimensionID, pSticker->currentFrame);
 
 			// force redraw
 			InvalidateRect(hWnd, NULL, FALSE);

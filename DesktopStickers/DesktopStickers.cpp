@@ -24,6 +24,11 @@ POINT dragOffset;
 // click through gloabal var
 BOOL isClickThrough = FALSE;
 
+// animation globals
+UINT frameCount = 0;
+UINT currentFrame = 0;
+UINT frameDelay = 30;
+
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 
 int WINAPI WinMain(
@@ -39,6 +44,13 @@ int WINAPI WinMain(
 	// load the image
 	pImage = new Image(L"C:\\Users\\micha\\Pictures\\stickers\\miku.gif");
 
+	// Get the number of frames in the GIF
+	UINT dimensionCount = pImage->GetFrameDimensionsCount();
+	GUID* pDimensionIDs = new GUID[dimensionCount];
+	pImage->GetFrameDimensionsList(pDimensionIDs, dimensionCount);
+	frameCount = pImage->GetFrameCount(&pDimensionIDs[0]);
+	delete[] pDimensionIDs;
+
 	WNDCLASSEX wcex;
 
 	wcex.cbSize = sizeof(WNDCLASSEX);
@@ -49,7 +61,7 @@ int WINAPI WinMain(
 	wcex.hInstance		= hInstance;
 	wcex.hIcon			= LoadIcon(wcex.hInstance, IDI_APPLICATION);
 	wcex.hCursor		= LoadCursor(NULL, IDC_ARROW);
-	wcex.hbrBackground	= (HBRUSH)(COLOR_WINDOW + 1);
+	wcex.hbrBackground	= NULL;
 	wcex.lpszMenuName	= NULL;
 	wcex.lpszClassName	= szWindowClass;
 	wcex.hIconSm		= LoadIcon(wcex.hInstance, IDI_APPLICATION);
@@ -88,6 +100,11 @@ int WINAPI WinMain(
 	// make ws_ex_layered opaque 255 = 100%
 	SetLayeredWindowAttributes(hWnd, 0, 255, LWA_ALPHA);
 
+	// start gif if file more than 1 frame
+	if (frameCount > 1) {
+		SetTimer(hWnd, 1, frameDelay, NULL);
+	}
+
 	ShowWindow(hWnd, nCmdShow);
 	UpdateWindow(hWnd);
 
@@ -119,6 +136,7 @@ LRESULT CALLBACK WndProc(
 		if (pImage)
 		{
 			Graphics graphics(hdc);
+			graphics.Clear(Color::Transparent);
 			graphics.DrawImage(pImage, 0, 0);
 		}
 
@@ -180,9 +198,25 @@ LRESULT CALLBACK WndProc(
 			}
 		}
 		break;
+	case WM_TIMER:
+		if (pImage && frameCount > 1)
+		{
+			// move to next frame
+			currentFrame = (currentFrame + 1) % frameCount;
+
+			// select the frame
+			GUID dimensionID = FrameDimensionTime;
+			pImage->SelectActiveFrame(&dimensionID, currentFrame);
+
+			// force redraw
+			InvalidateRect(hWnd, NULL, FALSE);
+		}
+		break;
 	case WM_DESTROY:
 		PostQuitMessage(0);
 		break;
+	case WM_ERASEBKGND:
+		return 1;
 	default:
 		return DefWindowProc(hWnd, message, wParam, lParam);
 		break;

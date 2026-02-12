@@ -135,9 +135,29 @@ LRESULT CALLBACK WndProc(
 
 		if (pImage)
 		{
-			Graphics graphics(hdc);
-			graphics.Clear(Color::Transparent);
+			// get window size
+			RECT rect;
+			GetClientRect(hWnd, &rect);
+			int width = rect.right - rect.left;
+			int height = rect.bottom - rect.top;
+
+			// create the off screen buffer
+			HDC memDC = CreateCompatibleDC(hdc);
+			HBITMAP memBitmap = CreateCompatibleBitmap(hdc, width, height);
+			HBITMAP oldBitmap = (HBITMAP)SelectObject(memDC, memBitmap);
+
+			// draw to buffer
+			Graphics graphics(memDC);
+			graphics.Clear(Color(0, 0, 0, 0));
 			graphics.DrawImage(pImage, 0, 0);
+
+			// copy buffer to screen
+			BitBlt(hdc, 0, 0, width, height, memDC, 0, 0, SRCCOPY);
+
+			// clean up
+			SelectObject(memDC, oldBitmap);
+			DeleteObject(memBitmap);
+			DeleteDC(memDC);
 		}
 
 		EndPaint(hWnd, &ps);

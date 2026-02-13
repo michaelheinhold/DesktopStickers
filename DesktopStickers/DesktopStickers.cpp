@@ -8,6 +8,7 @@
 using namespace Gdiplus;
 
 #pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "Msimg32.lib")
 
 // Sticker struct
 struct StickerData
@@ -20,6 +21,8 @@ struct StickerData
 	BOOL isClickThrough;
 	UINT frameDelay;
 	WCHAR imagePath[MAX_PATH];
+	int width{ 300 };
+	int height{ 300 };
 };
 
 static TCHAR szWindowClass[] = _T("DesktopStickers");
@@ -79,6 +82,10 @@ HWND CreateStickerWindow(HINSTANCE hInstance, const wchar_t* imagePath, int x, i
 		pSticker->frameDelay = 50; // set to 50 ¯\_(ツ)_/¯
 	}
 
+	// get image size
+	pSticker->width = pSticker->pImage->GetWidth();
+	pSticker->height = pSticker->pImage->GetHeight();
+
 	// create window
 	HWND hWnd = CreateWindowEx(
 		WS_EX_TOPMOST | WS_EX_LAYERED,
@@ -86,7 +93,7 @@ HWND CreateStickerWindow(HINSTANCE hInstance, const wchar_t* imagePath, int x, i
 		szTitle,
 		WS_POPUP,
 		x, y,
-		500, 300,
+		pSticker->width, pSticker->height,  // Use actual image size
 		NULL,
 		NULL,
 		hInstance,
@@ -99,7 +106,7 @@ HWND CreateStickerWindow(HINSTANCE hInstance, const wchar_t* imagePath, int x, i
 	SetStickerData(hWnd, pSticker);
 
 	// make ws_ex_layered opaque 255 = 100%
-	SetLayeredWindowAttributes(hWnd, RGB(255, 0, 255), 255, LWA_COLORKEY | LWA_ALPHA);
+	SetLayeredWindowAttributes(hWnd, RGB(0, 0, 0), 255, LWA_COLORKEY | LWA_ALPHA);
 
 	// start gif if file more than 1 frame
 	if (pSticker->frameCount > 1) {
@@ -139,11 +146,13 @@ void SaveStickers()
 		GetWindowRect(hWnd, &rect);
 
 		// save file path
-		fwprintf(file, L"%s|%d|%d|%d|\n",
+		fwprintf(file, L"%s|%d|%d|%d|%d|%d\n",
 			pSticker->imagePath,
 			rect.left,
 			rect.top,
-			pSticker->isClickThrough);
+			pSticker->isClickThrough,
+			pSticker->width,
+			pSticker->height);
 	}
 	fclose(file);
 }
@@ -161,22 +170,31 @@ void LoadStickers()
 	for (int i = 0; i < count; i++)
 	{
 		WCHAR path[MAX_PATH];
-		int x, y, clickThrough;
+		int x, y, clickThrough, width, height;
 
 		// read imagePath
-		if (fwscanf_s(file, L"%[^|]|%d|%d|%d\n", path, MAX_PATH, &x, &y, &clickThrough) == 4)
+		if (fwscanf_s(file, L"%[^|]|%d|%d|%d|%d|%d\n", path, MAX_PATH, &x, &y, &clickThrough, &width, &height) == 6)
 		{
 			HWND hWnd = CreateStickerWindow(hInst, path, x, y);
 
 			// restore click-through state
-			if (hWnd && clickThrough)
+			if (hWnd)
 			{
 				StickerData* pSticker = GetStickerData(hWnd);
 				if (pSticker)
 				{
-					pSticker->isClickThrough = TRUE;
-					SetWindowLong(hWnd, GWL_EXSTYLE,
-						GetWindowLong(hWnd, GWL_EXSTYLE | WS_EX_TRANSPARENT));
+					// Restore size
+					pSticker->width = width;
+					pSticker->height = height;
+					SetWindowPos(hWnd, NULL, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER);
+
+					// Restore click-through state
+					if (clickThrough)
+					{
+						pSticker->isClickThrough = TRUE;
+						SetWindowLong(hWnd, GWL_EXSTYLE,
+							GetWindowLong(hWnd, GWL_EXSTYLE) | WS_EX_TRANSPARENT);
+					}
 				}
 			}
 		}
@@ -359,37 +377,42 @@ LRESULT CALLBACK WndProc(
 	switch (message)
 	{
 	case WM_PAINT:
-		hdc = BeginPaint(hWnd, &ps);
+	{
+		PAINTSTRUCT ps;
+		HDC hdc = BeginPaint(hWnd, &ps);
 
 		if (pSticker && pSticker->pImage)
 		{
-			// get window size
+			// Get window size
 			RECT rect;
 			GetClientRect(hWnd, &rect);
 			int width = rect.right - rect.left;
 			int height = rect.bottom - rect.top;
 
-			// create the off screen buffer
+			// Create off-screen buffer
 			HDC memDC = CreateCompatibleDC(hdc);
 			HBITMAP memBitmap = CreateCompatibleBitmap(hdc, width, height);
 			HBITMAP oldBitmap = (HBITMAP)SelectObject(memDC, memBitmap);
 
-			// draw to buffer
+			// Draw with GDI+ on BLACK background (matches colorkey)
 			Graphics graphics(memDC);
-			graphics.Clear(Color(255, 0, 255));
-			graphics.DrawImage(pSticker->pImage, 0, 0);
+			graphics.Clear(Color(0, 0, 0));  // Black = transparent
+			graphics.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+			graphics.SetSmoothingMode(SmoothingModeHighQuality);
+			graphics.DrawImage(pSticker->pImage, 0, 0, width, height);
 
-			// copy buffer to screen
+			// Copy to screen
 			BitBlt(hdc, 0, 0, width, height, memDC, 0, 0, SRCCOPY);
 
-			// clean up
+			// Cleanup
 			SelectObject(memDC, oldBitmap);
 			DeleteObject(memBitmap);
 			DeleteDC(memDC);
 		}
 
 		EndPaint(hWnd, &ps);
-		break;
+	}
+	break;
 	case WM_LBUTTONDOWN: // dragging window
 		if (pSticker)
 		{
@@ -472,6 +495,37 @@ LRESULT CALLBACK WndProc(
 			}
 		}
 		break;
+	case WM_MOUSEWHEEL:
+	{
+		if (pSticker && !pSticker->isClickThrough)
+		{
+			// get scroll direction
+			int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+			// adjust size 5% per scroll
+			float scale = (delta > 0) ? 1.05f : 0.95f;
+			pSticker->width = (int)(pSticker->width * scale);
+			pSticker->height = (int)(pSticker->height * scale);
+
+			// Enforce minimum size
+			if (pSticker->width < 50) pSticker->width = 50;
+			if (pSticker->height < 50) pSticker->height = 50;
+
+			// Enforce maximum size
+			if (pSticker->width > 1920) pSticker->width = 1920;
+			if (pSticker->height > 1920) pSticker->height = 1920;
+
+			// Get current position
+			RECT rect;
+			GetWindowRect(hWnd, &rect);
+
+			// Move AND resize in one call with exact dimensions
+			MoveWindow(hWnd, rect.left, rect.top, pSticker->width, pSticker->height, TRUE);
+
+			// Force immediate redraw
+			RedrawWindow(hWnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ERASE);
+		}
+	}
+	break;
 	case WM_TIMER:
 		if (pSticker && pSticker->pImage && pSticker->frameCount > 1)
 		{
@@ -486,6 +540,12 @@ LRESULT CALLBACK WndProc(
 			InvalidateRect(hWnd, NULL, FALSE);
 		}
 		break;
+	case WM_SIZE:
+	{
+		// Force complete redraw when window size changes
+		InvalidateRect(hWnd, NULL, TRUE);
+	}
+	break;
 	case WM_DESTROY:
 	{
 		//remove sticker from list

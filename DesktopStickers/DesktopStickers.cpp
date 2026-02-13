@@ -468,22 +468,33 @@ LRESULT CALLBACK WndProc(
 	}
 	break;
 	case WM_KEYDOWN:
-		// Check if Ctrl+Shift+T is pressed (click through command)
-		if (pSticker && wParam == 'T' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000))
+		// Check if Ctrl+Shift+T is pressed (global click-through toggle)
+		if (wParam == 'T' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000))
 		{
+			// Toggle global state
+			g_globalClickThrough = !g_globalClickThrough;
+
 			// Apply to ALL stickers
 			for (HWND stickerWnd : g_stickerWindows)
 			{
 				if (g_globalClickThrough)
 				{
+					// Enable click-through
 					SetWindowLong(stickerWnd, GWL_EXSTYLE,
 						GetWindowLong(stickerWnd, GWL_EXSTYLE) | WS_EX_TRANSPARENT);
 				}
 				else
 				{
+					// Disable click-through
 					SetWindowLong(stickerWnd, GWL_EXSTYLE,
 						GetWindowLong(stickerWnd, GWL_EXSTYLE) & ~WS_EX_TRANSPARENT);
 				}
+			}
+
+			// Hide/show manager
+			if (g_hManagerWnd)
+			{
+				ShowWindow(g_hManagerWnd, g_globalClickThrough ? SW_HIDE : SW_SHOW);
 			}
 		}
 		break;

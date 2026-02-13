@@ -8,7 +8,6 @@
 using namespace Gdiplus;
 
 #pragma comment(lib, "gdiplus.lib")
-#pragma comment(lib, "Msimg32.lib")
 
 // Sticker struct
 struct StickerData
@@ -18,7 +17,6 @@ struct StickerData
 	UINT currentFrame;
 	BOOL isDragging;
 	POINT dragOffset;
-	BOOL isClickThrough;
 	UINT frameDelay;
 	WCHAR imagePath[MAX_PATH];
 	int width{ 300 };
@@ -36,6 +34,8 @@ ULONG_PTR gdiplusToken;
 
 // list of stickers for persitance
 std::vector<HWND> g_stickerWindows;
+HWND g_hManagerWnd = NULL;
+BOOL g_globalClickThrough = FALSE;
 
 // helper to get sticker data from a window
 StickerData* GetStickerData(HWND hWnd) { return (StickerData*)GetWindowLongPtr(hWnd, GWLP_USERDATA); }
@@ -51,7 +51,6 @@ HWND CreateStickerWindow(HINSTANCE hInstance, const wchar_t* imagePath, int x, i
 	wcscpy_s(pSticker->imagePath, MAX_PATH, imagePath);
 	pSticker->currentFrame = 0;
 	pSticker->isDragging = FALSE;
-	pSticker->isClickThrough = FALSE;
 
 	// get frame # in gif
 	UINT dimensionCount = pSticker->pImage->GetFrameDimensionsCount();
@@ -146,11 +145,10 @@ void SaveStickers()
 		GetWindowRect(hWnd, &rect);
 
 		// save file path
-		fwprintf(file, L"%s|%d|%d|%d|%d|%d\n",
+		fwprintf(file, L"%s|%d|%d|%d|%d\n",
 			pSticker->imagePath,
 			rect.left,
 			rect.top,
-			pSticker->isClickThrough,
 			pSticker->width,
 			pSticker->height);
 	}
@@ -170,14 +168,13 @@ void LoadStickers()
 	for (int i = 0; i < count; i++)
 	{
 		WCHAR path[MAX_PATH];
-		int x, y, clickThrough, width, height;
+		int x, y, width, height;
 
 		// read imagePath
-		if (fwscanf_s(file, L"%[^|]|%d|%d|%d|%d|%d\n", path, MAX_PATH, &x, &y, &clickThrough, &width, &height) == 6)
+		if (fwscanf_s(file, L"%[^|]|%d|%d|%d|%d\n", path, MAX_PATH, &x, &y, &width, &height) == 5)
 		{
 			HWND hWnd = CreateStickerWindow(hInst, path, x, y);
 
-			// restore click-through state
 			if (hWnd)
 			{
 				StickerData* pSticker = GetStickerData(hWnd);
@@ -188,13 +185,6 @@ void LoadStickers()
 					pSticker->height = height;
 					SetWindowPos(hWnd, NULL, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER);
 
-					// Restore click-through state
-					if (clickThrough)
-					{
-						pSticker->isClickThrough = TRUE;
-						SetWindowLong(hWnd, GWL_EXSTYLE,
-							GetWindowLong(hWnd, GWL_EXSTYLE) | WS_EX_TRANSPARENT);
-					}
 				}
 			}
 		}
@@ -280,6 +270,8 @@ int WINAPI WinMain(
 		MessageBox(NULL, _T("Manager window creation failed!"), _T("Error"), NULL);
 		return 1;
 	}
+
+	g_hManagerWnd = hManagerWnd;
 
 	ShowWindow(hManagerWnd, nCmdShow);
 	UpdateWindow(hManagerWnd);
@@ -454,7 +446,7 @@ LRESULT CALLBACK WndProc(
 		break;
 	case WM_RBUTTONDOWN:
 	{
-		if (pSticker && !pSticker->isClickThrough) // sticker exists, and we're not in clickthru mode
+		if (pSticker && !g_globalClickThrough) // sticker exists, and we're not in clickthru mode
 		{
 			// create context menu
 			HMENU hMenu = CreatePopupMenu();
@@ -479,25 +471,25 @@ LRESULT CALLBACK WndProc(
 		// Check if Ctrl+Shift+T is pressed (click through command)
 		if (pSticker && wParam == 'T' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000))
 		{
-			pSticker->isClickThrough = !pSticker->isClickThrough;
-
-			if (pSticker->isClickThrough)
+			// Apply to ALL stickers
+			for (HWND stickerWnd : g_stickerWindows)
 			{
-				// enable click-through
-				SetWindowLong(hWnd, GWL_EXSTYLE,
-					GetWindowLong(hWnd, GWL_EXSTYLE) | WS_EX_TRANSPARENT);
-			}
-			else
-			{
-				// disable click-through
-				SetWindowLong(hWnd, GWL_EXSTYLE,
-					GetWindowLong(hWnd, GWL_EXSTYLE) & ~WS_EX_TRANSPARENT);
+				if (g_globalClickThrough)
+				{
+					SetWindowLong(stickerWnd, GWL_EXSTYLE,
+						GetWindowLong(stickerWnd, GWL_EXSTYLE) | WS_EX_TRANSPARENT);
+				}
+				else
+				{
+					SetWindowLong(stickerWnd, GWL_EXSTYLE,
+						GetWindowLong(stickerWnd, GWL_EXSTYLE) & ~WS_EX_TRANSPARENT);
+				}
 			}
 		}
 		break;
 	case WM_MOUSEWHEEL:
 	{
-		if (pSticker && !pSticker->isClickThrough)
+		if (pSticker && !g_globalClickThrough)
 		{
 			// get scroll direction
 			int delta = GET_WHEEL_DELTA_WPARAM(wParam);

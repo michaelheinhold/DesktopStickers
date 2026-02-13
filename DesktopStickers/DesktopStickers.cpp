@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <gdiplus.h>
+#include <vector>
 
 using namespace Gdiplus;
 
@@ -18,6 +19,7 @@ struct StickerData
 	POINT dragOffset;
 	BOOL isClickThrough;
 	UINT frameDelay;
+	WCHAR imagePath[MAX_PATH];
 };
 
 static TCHAR szWindowClass[] = _T("DesktopStickers");
@@ -28,6 +30,9 @@ static TCHAR szManagerClass[] = _T("StickerManager");
 HINSTANCE hInst;
 // GDI+ (image loader) globals
 ULONG_PTR gdiplusToken;
+
+// list of stickers for persitance
+std::vector<HWND> g_stickerWindows;
 
 // helper to get sticker data from a window
 StickerData* GetStickerData(HWND hWnd) { return (StickerData*)GetWindowLongPtr(hWnd, GWLP_USERDATA); }
@@ -40,6 +45,7 @@ HWND CreateStickerWindow(HINSTANCE hInstance, const wchar_t* imagePath, int x, i
 	// create sticker data
 	StickerData* pSticker = new StickerData();
 	pSticker->pImage = new Image(imagePath);
+	wcscpy_s(pSticker->imagePath, MAX_PATH, imagePath);
 	pSticker->currentFrame = 0;
 	pSticker->isDragging = FALSE;
 	pSticker->isClickThrough = FALSE;
@@ -79,7 +85,7 @@ HWND CreateStickerWindow(HINSTANCE hInstance, const wchar_t* imagePath, int x, i
 		szWindowClass,
 		szTitle,
 		WS_POPUP,
-		100, 100,
+		x, y,
 		500, 300,
 		NULL,
 		NULL,
@@ -103,7 +109,79 @@ HWND CreateStickerWindow(HINSTANCE hInstance, const wchar_t* imagePath, int x, i
 	ShowWindow(hWnd, SW_SHOW);
 	UpdateWindow(hWnd);
 
+	// store sticker in sticker list
+	g_stickerWindows.push_back(hWnd);
+
 	return hWnd;
+}
+
+// save stickers to file
+void SaveStickers()
+{
+	FILE* file;
+	errno_t err = _wfopen_s(&file, L"stickers.dat", L"w");
+	if (err != 0 || !file)
+	{
+		MessageBox(NULL, _T("Failed to save stickers!"), _T("Debug"), MB_OK);
+		return;
+	}
+
+	// Write number of stickers
+	fwprintf(file, L"%d\n", (int)g_stickerWindows.size());
+
+	for (HWND hWnd : g_stickerWindows)
+	{
+		StickerData* pSticker = GetStickerData(hWnd);
+		if (!pSticker || !pSticker->pImage) continue;
+
+		// get window position
+		RECT rect;
+		GetWindowRect(hWnd, &rect);
+
+		// save file path
+		fwprintf(file, L"%s|%d|%d|%d|\n",
+			pSticker->imagePath,
+			rect.left,
+			rect.top,
+			pSticker->isClickThrough);
+	}
+	fclose(file);
+}
+
+// load stickers
+void LoadStickers()
+{
+	FILE* file;
+	_wfopen_s(&file, L"stickers.dat", L"r");
+	if (!file) return; // no saved stickers
+
+	int count = 0;
+	fwscanf_s(file, L"%d\n", &count);
+
+	for (int i = 0; i < count; i++)
+	{
+		WCHAR path[MAX_PATH];
+		int x, y, clickThrough;
+
+		// read imagePath
+		if (fwscanf_s(file, L"%[^|]|%d|%d|%d\n", path, MAX_PATH, &x, &y, &clickThrough) == 4)
+		{
+			HWND hWnd = CreateStickerWindow(hInst, path, x, y);
+
+			// restore click-through state
+			if (hWnd && clickThrough)
+			{
+				StickerData* pSticker = GetStickerData(hWnd);
+				if (pSticker)
+				{
+					pSticker->isClickThrough = TRUE;
+					SetWindowLong(hWnd, GWL_EXSTYLE,
+						GetWindowLong(hWnd, GWL_EXSTYLE | WS_EX_TRANSPARENT));
+				}
+			}
+		}
+	}
+	fclose(file);
 }
 
 LRESULT CALLBACK ManagerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -188,13 +266,11 @@ int WINAPI WinMain(
 	ShowWindow(hManagerWnd, nCmdShow);
 	UpdateWindow(hManagerWnd);
 
+	// load stickers
+	LoadStickers();
+
 	// Enable drag-and-drop
 	DragAcceptFiles(hManagerWnd, TRUE);
-
-	// CreateStickerWindow(hInstance, L"C:\\Users\\micha\\Pictures\\stickers\\miku.gif", 100, 100);
-
-	// CreateStickerWindow(hInstance, L"C:\\Users\\micha\\Pictures\\stickers\\darling.gif", 300, 200);
-
 
 	MSG msg;
 	while (GetMessage(&msg, NULL, 0, 0))
@@ -252,6 +328,10 @@ LRESULT CALLBACK ManagerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 		DragFinish(hDrop);
 	}
 	break;
+	case WM_CLOSE:
+		SaveStickers();
+		DestroyWindow(hWnd);
+		break;
 	case WM_DESTROY:
 		PostQuitMessage(0);
 		break;
@@ -408,6 +488,13 @@ LRESULT CALLBACK WndProc(
 		break;
 	case WM_DESTROY:
 	{
+		//remove sticker from list
+		auto it = std::find(g_stickerWindows.begin(), g_stickerWindows.end(), hWnd);
+		if (it != g_stickerWindows.end())
+		{
+			g_stickerWindows.erase(it);
+		}
+
 		// Clean up this sticker
 		StickerData* pSticker = GetStickerData(hWnd);
 		if (pSticker)

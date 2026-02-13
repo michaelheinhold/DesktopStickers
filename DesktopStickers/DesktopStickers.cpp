@@ -22,9 +22,10 @@ struct StickerData
 
 static TCHAR szWindowClass[] = _T("DesktopStickers");
 static TCHAR szTitle[] = _T("Windows Desktop Sticker Application");
+// manager window
+static TCHAR szManagerClass[] = _T("StickerManager");
 
 HINSTANCE hInst;
-
 // GDI+ (image loader) globals
 ULONG_PTR gdiplusToken;
 
@@ -83,6 +84,7 @@ HWND CreateStickerWindow(HINSTANCE hInstance, const wchar_t* imagePath, int x, i
 	return hWnd;
 }
 
+LRESULT CALLBACK ManagerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 
 int WINAPI WinMain(
@@ -91,14 +93,16 @@ int WINAPI WinMain(
 				_In_ LPSTR		lpCmdLine,
 				_In_ int		nCmdShow)
 {
+	hInst = hInstance;
 	// initialize GDI+
 	GdiplusStartupInput gdiplusStartupInput;
 	GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
 
+	// Sticker window registration
 	WNDCLASSEX wcex;
 	wcex.cbSize = sizeof(WNDCLASSEX);
 	wcex.style			= CS_HREDRAW | CS_VREDRAW;
-	wcex.lpfnWndProc	= WndProc;
+	wcex.lpfnWndProc	= WndProc; // sticker window proc
 	wcex.cbClsExtra		= 0;
 	wcex.cbWndExtra		= 0;
 	wcex.hInstance		= hInstance;
@@ -112,15 +116,62 @@ int WINAPI WinMain(
 	if (!RegisterClassEx(&wcex))
 	{
 		MessageBox(NULL,
-			_T("Call to RegisterClassEX failed!"),
-			_T("Windows Desktop Guided Tour"),
+			_T("Sticker class registration failed!"),
+			_T("Error"),
 			NULL);
 		return 1;
 	}
 
-	CreateStickerWindow(hInstance, L"C:\\Users\\micha\\Pictures\\stickers\\miku.gif", 100, 100);
+	// manager window registration
+	WNDCLASSEX managerClass;
+	managerClass.cbSize	= sizeof(WNDCLASSEX);
+	managerClass.style			= CS_HREDRAW | CS_VREDRAW;
+	managerClass.lpfnWndProc	= ManagerWndProc;  // Manager window proc
+	managerClass.cbClsExtra		= 0;
+	managerClass.cbWndExtra		= 0;
+	managerClass.hInstance		= hInstance;
+	managerClass.hIcon			= LoadIcon(hInstance, IDI_APPLICATION);
+	managerClass.hCursor		= LoadCursor(NULL, IDC_ARROW);
+	managerClass.hbrBackground	= (HBRUSH)(COLOR_WINDOW + 1);
+	managerClass.lpszMenuName	= NULL;
+	managerClass.lpszClassName	= szManagerClass;
+	managerClass.hIconSm		= LoadIcon(hInstance, IDI_APPLICATION);
 
-	CreateStickerWindow(hInstance, L"C:\\Users\\micha\\Pictures\\stickers\\darling.gif", 300, 200);
+	if (!RegisterClassEx(&managerClass))
+	{
+		MessageBox(NULL,
+			_T("Manager class registration failed!"),
+			_T("Error"),
+			NULL);
+		return 1;
+	}
+
+	// Create the manager window
+	HWND hManagerWnd = CreateWindowEx(
+		WS_EX_TOPMOST,
+		szManagerClass,
+		_T("Sticker Manager"),
+		WS_OVERLAPPEDWINDOW,  // Normal window with title bar for now
+		CW_USEDEFAULT, CW_USEDEFAULT,
+		250, 150,
+		NULL, NULL, hInstance, NULL
+	);
+
+	if (!hManagerWnd)
+	{
+		MessageBox(NULL, _T("Manager window creation failed!"), _T("Error"), NULL);
+		return 1;
+	}
+
+	ShowWindow(hManagerWnd, nCmdShow);
+	UpdateWindow(hManagerWnd);
+
+	// Enable drag-and-drop
+	DragAcceptFiles(hManagerWnd, TRUE);
+
+	// CreateStickerWindow(hInstance, L"C:\\Users\\micha\\Pictures\\stickers\\miku.gif", 100, 100);
+
+	// CreateStickerWindow(hInstance, L"C:\\Users\\micha\\Pictures\\stickers\\darling.gif", 300, 200);
 
 
 	MSG msg;
@@ -132,6 +183,64 @@ int WINAPI WinMain(
 
 	return (int)msg.wParam;
 }
+
+// Manager window procedure
+LRESULT CALLBACK ManagerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	switch (message)
+	{
+	case WM_PAINT:
+	{
+		PAINTSTRUCT ps;
+		HDC hdc = BeginPaint(hWnd, &ps);
+
+		// Simple background
+		RECT rect;
+		GetClientRect(hWnd, &rect);
+		FillRect(hdc, &rect, (HBRUSH)(COLOR_WINDOW + 1));
+
+		// Draw some text
+		TCHAR text[] = _T("Drop GIFs here");
+		DrawText(hdc, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+		EndPaint(hWnd, &ps);
+	}
+	break;
+	case WM_DROPFILES:
+	{
+		HDROP hDrop = (HDROP)wParam;
+
+		// get number of files dropped
+		UINT fileCount = DragQueryFile(hDrop, 0xFFFFFFFF, NULL, 0);
+
+		// process each dropped file
+		for (UINT i = 0; i < fileCount; i++)
+		{
+			// get file path
+			WCHAR filePath[MAX_PATH];
+			DragQueryFile(hDrop, i, filePath, MAX_PATH);
+
+			int len = wcslen(filePath);
+			if (len > 4 && _wcsicmp(&filePath[len - 4], L".gif") == 0)
+			{
+				// create sticker at default position
+				CreateStickerWindow(hInst, filePath, 200 + (i * 50), 200 + (i * 50));
+			}
+		}
+		DragFinish(hDrop);
+	}
+	break;
+	case WM_DESTROY:
+		PostQuitMessage(0);
+		break;
+
+	default:
+		return DefWindowProc(hWnd, message, wParam, lParam);
+	}
+
+	return 0;
+}
+
 
 LRESULT CALLBACK WndProc(
 	_In_ HWND	hWnd,
@@ -253,7 +362,15 @@ LRESULT CALLBACK WndProc(
 		}
 		break;
 	case WM_DESTROY:
-		PostQuitMessage(0);
+	{
+		// Clean up this sticker
+		StickerData* pSticker = GetStickerData(hWnd);
+		if (pSticker)
+		{
+			delete pSticker->pImage;
+			delete pSticker;
+		}
+	}
 		break;
 	case WM_ERASEBKGND:
 		return 1;

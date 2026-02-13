@@ -1,4 +1,4 @@
-#include <windows.h>
+﻿#include <windows.h>
 #include <tchar.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +17,7 @@ struct StickerData
 	BOOL isDragging;
 	POINT dragOffset;
 	BOOL isClickThrough;
-	UINT frameDelay{ 30 };
+	UINT frameDelay;
 };
 
 static TCHAR szWindowClass[] = _T("DesktopStickers");
@@ -50,6 +50,28 @@ HWND CreateStickerWindow(HINSTANCE hInstance, const wchar_t* imagePath, int x, i
 	pSticker->pImage->GetFrameDimensionsList(pDimensionIDs, dimensionCount);
 	pSticker->frameCount = pSticker->pImage->GetFrameCount(&pDimensionIDs[0]);
 	delete[] pDimensionIDs;
+
+	// get frame delay from GIF metadata
+	UINT propSize = pSticker->pImage->GetPropertyItemSize(PropertyTagFrameDelay);
+	if (propSize > 0)
+	{
+		PropertyItem* pPropItem = (PropertyItem*)malloc(propSize);
+		if (pSticker->pImage->GetPropertyItem(PropertyTagFrameDelay, propSize, pPropItem) == Ok)
+		{
+			// frame delay is stored in 1/100ths of a second
+			// get delay for the first frame (typically the same for all frames)
+			LONG* pDelays = (LONG*)pPropItem->value;
+			int delayInHundreths = pDelays[0];
+
+			// convert to milliseconds (* 10)
+			pSticker->frameDelay = delayInHundreths * 10;
+		}
+		free(pPropItem);
+	}
+	else // no frame delay in metadata
+	{
+		pSticker->frameDelay = 50; // set to 50 ¯\_(ツ)_/¯
+	}
 
 	// create window
 	HWND hWnd = CreateWindowEx(
@@ -327,6 +349,29 @@ LRESULT CALLBACK WndProc(
 			ReleaseCapture(); // releases mouse capture
 		}
 		break;
+	case WM_RBUTTONDOWN:
+	{
+		if (pSticker && !pSticker->isClickThrough) // sticker exists, and we're not in clickthru mode
+		{
+			// create context menu
+			HMENU hMenu = CreatePopupMenu();
+			AppendMenu(hMenu, MF_STRING, 1, _T("Delete Sticker"));
+
+			// get cursor position for menu placement
+			POINT pt;
+			GetCursorPos(&pt);
+
+			// show menu and get user selection
+			int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_LEFTBUTTON,
+				pt.x, pt.y, 0, hWnd, NULL);
+			if (cmd == 1)
+			{
+				DestroyWindow(hWnd);
+			}
+			DestroyMenu(hMenu);
+		}
+	}
+	break;
 	case WM_KEYDOWN:
 		// Check if Ctrl+Shift+T is pressed (click through command)
 		if (pSticker && wParam == 'T' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000))
@@ -367,7 +412,13 @@ LRESULT CALLBACK WndProc(
 		StickerData* pSticker = GetStickerData(hWnd);
 		if (pSticker)
 		{
-			delete pSticker->pImage;
+			// stop timer
+			KillTimer(hWnd, 1);
+
+			if (pSticker->pImage)
+			{
+				delete pSticker->pImage;
+			}
 			delete pSticker;
 		}
 	}
